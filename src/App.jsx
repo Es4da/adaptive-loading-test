@@ -4,7 +4,9 @@ import 'react-loading-skeleton/dist/skeleton.css';
 import Matter from 'matter-js';
 
 function App() {
-  const [mode, setMode] = useState('simple');
+  const [timeMode, setTimeMode] = useState('short'); // 'short' (5s) or 'long' (30s)
+  const [uiMode, setUiMode] = useState('simple');   // 'simple' or 'interactive'
+  
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [showDone, setShowDone] = useState(false);
@@ -12,7 +14,7 @@ function App() {
   const sceneRef = useRef(null);
   const engineRef = useRef(null);
   const ballCountRef = useRef(0);
-  const wallsRef = useRef([]); // リサイズ時に壁を更新するための参照
+  const wallsRef = useRef([]);
 
   const startLoading = () => {
     setIsLoading(true);
@@ -21,10 +23,11 @@ function App() {
     ballCountRef.current = 0;
   };
 
-  // 進捗管理
+  // 進捗ロジックと完了後のフェードアウト
   useEffect(() => {
     if (!isLoading) return;
-    const duration = mode === 'simple' ? 5000 : 30000;
+    
+    const duration = timeMode === 'short' ? 5000 : 30000;
     const intervalTime = 100;
     const increment = (intervalTime / duration) * 100;
 
@@ -33,10 +36,18 @@ function App() {
         const next = prev + increment;
         if (next >= 100) {
           clearInterval(timer);
+          
+          // 0.5秒後にローディングを終了し、完了を表示
           setTimeout(() => {
             setIsLoading(false);
             setShowDone(true);
+            
+            // 3秒後に完了表示を消す
+            setTimeout(() => {
+              setShowDone(false);
+            }, 3000);
           }, 500);
+          
           return 100;
         }
         return next;
@@ -44,11 +55,11 @@ function App() {
     }, intervalTime);
 
     return () => clearInterval(timer);
-  }, [isLoading, mode]);
+  }, [isLoading, timeMode]);
 
-  // Matter.js セットアップ（ウィンドウ全体）
+  // Matter.js セットアップ
   useEffect(() => {
-    if (isLoading && mode === 'interactive') {
+    if (isLoading && uiMode === 'interactive') {
       const { Engine, Render, Runner, Bodies, Composite, Mouse, MouseConstraint } = Matter;
 
       const engine = Engine.create();
@@ -65,13 +76,14 @@ function App() {
         }
       });
 
-      // 床と壁の作成関数
       const createWalls = () => {
         const thickness = 100;
+        const width = window.innerWidth;
+        const height = window.innerHeight;
         return [
-          Bodies.rectangle(window.innerWidth / 2, window.innerHeight + thickness / 2, window.innerWidth, thickness, { isStatic: true }), // 床
-          Bodies.rectangle(-thickness / 2, window.innerHeight / 2, thickness, window.innerHeight, { isStatic: true }), // 左
-          Bodies.rectangle(window.innerWidth + thickness / 2, window.innerHeight / 2, thickness, window.innerHeight, { isStatic: true }) // 右
+          Bodies.rectangle(width / 2, height + thickness / 2, width, thickness, { isStatic: true }),
+          Bodies.rectangle(-thickness / 2, height / 2, thickness, height, { isStatic: true }),
+          Bodies.rectangle(width + thickness / 2, height / 2, thickness, height, { isStatic: true })
         ];
       };
 
@@ -79,31 +91,26 @@ function App() {
       wallsRef.current = walls;
       Composite.add(engine.world, walls);
 
-      // マウスインタラクション（ドラッグ操作）
       const mouse = Mouse.create(render.canvas);
       const mouseConstraint = MouseConstraint.create(engine, {
         mouse: mouse,
-        constraint: {
-          stiffness: 0.2,
-          render: { visible: false }
-        }
+        constraint: { stiffness: 0.2, render: { visible: false } }
       });
 
       Composite.add(engine.world, mouseConstraint);
-      render.mouse = mouse; // スクロール干渉防止
+      render.mouse = mouse;
 
       Render.run(render);
       const runner = Runner.create();
       Runner.run(runner, engine);
 
-      // リサイズ対応
       const handleResize = () => {
         render.canvas.width = window.innerWidth;
         render.canvas.height = window.innerHeight;
-        // 壁の位置を更新
         Composite.remove(engine.world, wallsRef.current);
-        wallsRef.current = createWalls();
-        Composite.add(engine.world, wallsRef.current);
+        const newWalls = createWalls();
+        wallsRef.current = newWalls;
+        Composite.add(engine.world, newWalls);
       };
 
       window.addEventListener('resize', handleResize);
@@ -113,57 +120,72 @@ function App() {
         Render.stop(render);
         Engine.clear(engine);
         render.canvas.remove();
-        render.textures = {};
       };
     }
-  }, [isLoading, mode]);
+  }, [isLoading, uiMode]);
 
-  // 進捗2%ごとに大きなボールを生成
+  // ボール生成ロジック
   useEffect(() => {
-    if (isLoading && mode === 'interactive' && engineRef.current) {
+    if (isLoading && uiMode === 'interactive' && engineRef.current) {
       const targetBallCount = Math.floor(progress / 2);
       const diff = targetBallCount - ballCountRef.current;
 
       if (diff > 0) {
         for (let i = 0; i < diff; i++) {
-          const radius = 25 + Math.random() * 15; // ボールを大きく（25-40）
-          const x = Math.random() * (window.innerWidth - 100) + 50;
+          const radius = 30 + Math.random() * 20;
+          const x = Math.random() * (window.innerWidth - 60) + 30;
           const ball = Matter.Bodies.circle(x, -50, radius, {
-            restitution: 0.6,
+            restitution: 0.5,
             friction: 0.1,
-            render: {
-              fillStyle: `hsl(${Math.random() * 360}, 70%, 60%)`
-            }
+            render: { fillStyle: `hsl(${Math.random() * 360}, 70%, 60%)` }
           });
           Matter.Composite.add(engineRef.current.world, ball);
         }
         ballCountRef.current = targetBallCount;
       }
     }
-  }, [progress, isLoading, mode]);
+  }, [progress, isLoading, uiMode]);
 
   return (
-    <div className="relative min-h-screen bg-white overflow-hidden font-sans">
+    <div className="relative min-h-screen bg-slate-50 overflow-hidden font-sans">
       
-      {/* Matter.js Canvas Container (背景として配置) */}
+      {/* 物理演算背景 */}
       <div ref={sceneRef} className="absolute inset-0 z-0 pointer-events-auto" />
 
-      {/* UI Overlay */}
+      {/* メインUI */}
       <div className="relative z-10 flex flex-col items-center min-h-screen pointer-events-none">
         
-        {/* モード切替（ローディング中以外表示） */}
+        {/* 操作パネル（ローディング中以外表示） */}
         {!isLoading && (
-          <div className="mt-12 pointer-events-auto">
-            <div className="flex bg-slate-100 rounded-full p-1 shadow-inner border border-slate-200">
+          <div className="mt-8 flex flex-col gap-4 items-center pointer-events-auto">
+            
+            {/* 待機時間の選択 */}
+            <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-200">
               <button 
-                onClick={() => setMode('simple')}
-                className={`px-8 py-2 rounded-full font-medium transition ${mode === 'simple' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}
+                onClick={() => setTimeMode('short')}
+                className={`px-6 py-1.5 rounded-lg text-sm font-bold transition ${timeMode === 'short' ? 'bg-blue-50 text-blue-600' : 'text-slate-400'}`}
+              >
+                短時間 (5s)
+              </button>
+              <button 
+                onClick={() => setTimeMode('long')}
+                className={`px-6 py-1.5 rounded-lg text-sm font-bold transition ${timeMode === 'long' ? 'bg-blue-50 text-blue-600' : 'text-slate-400'}`}
+              >
+                長時間 (30s)
+              </button>
+            </div>
+
+            {/* UIモードの選択 */}
+            <div className="flex bg-white rounded-full p-1 shadow-md border border-slate-200">
+              <button 
+                onClick={() => setUiMode('simple')}
+                className={`px-8 py-2 rounded-full font-bold transition ${uiMode === 'simple' ? 'bg-slate-800 text-white' : 'text-slate-500'}`}
               >
                 簡易的
               </button>
               <button 
-                onClick={() => setMode('interactive')}
-                className={`px-8 py-2 rounded-full font-medium transition ${mode === 'interactive' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}
+                onClick={() => setUiMode('interactive')}
+                className={`px-8 py-2 rounded-full font-bold transition ${uiMode === 'interactive' ? 'bg-slate-800 text-white' : 'text-slate-500'}`}
               >
                 インタラクティブ
               </button>
@@ -171,49 +193,53 @@ function App() {
           </div>
         )}
 
+        {/* コンテンツエリア */}
         <div className="flex-grow flex flex-col items-center justify-center w-full px-4">
           {!isLoading ? (
-            <button 
-              onClick={startLoading}
-              className="pointer-events-auto bg-blue-600 hover:bg-blue-700 text-white text-xl font-bold py-5 px-16 rounded-2xl shadow-xl transition-all hover:scale-105 active:scale-95"
-            >
-              ローディング開始
-            </button>
+            <div className="text-center flex flex-col items-center gap-6">
+              <div className="px-4 py-2 bg-slate-200/50 rounded-lg text-slate-500 text-sm font-medium">
+                条件: {timeMode === 'short' ? '5秒' : '30秒'} × {uiMode === 'simple' ? '簡易的' : 'インタラクティブ'}
+              </div>
+              <button 
+                onClick={startLoading}
+                className="pointer-events-auto bg-blue-600 hover:bg-blue-700 text-white text-xl font-bold py-5 px-16 rounded-2xl shadow-xl active:scale-95 transition-transform"
+              >
+                ローディング開始
+              </button>
+            </div>
           ) : (
-            <div className="w-full max-w-xl bg-white/90 backdrop-blur-md p-10 rounded-3xl shadow-2xl border border-white/50 text-center">
+            <div className="w-full max-w-xl bg-white/80 backdrop-blur-sm p-10 rounded-3xl shadow-2xl border border-white text-center">
               <h2 className="text-2xl font-bold mb-8 text-slate-800">
                 データを読み込み中...
               </h2>
 
-              {mode === 'simple' && (
-                <SkeletonTheme baseColor="#f1f5f9" highlightColor="#ffffff">
-                  <div className="mb-8 text-left space-y-4">
-                    <Skeleton height={40} width="80%" />
+              {uiMode === 'simple' && (
+                <div className="mb-8 text-left">
+                  <SkeletonTheme baseColor="#e2e8f0" highlightColor="#f8fafc">
+                    <Skeleton height={30} width="70%" className="mb-4" />
                     <Skeleton count={2} />
-                  </div>
-                </SkeletonTheme>
+                  </SkeletonTheme>
+                </div>
               )}
 
               {/* 共通プログレスバー */}
-              <div className="w-full bg-slate-100 h-6 rounded-full overflow-hidden border border-slate-200 shadow-inner">
+              <div className="w-full bg-slate-200 h-6 rounded-full overflow-hidden shadow-inner">
                 <div 
-                  className="bg-blue-500 h-full transition-all duration-100 ease-linear shadow-[0_0_15px_rgba(59,130,246,0.5)]"
+                  className="bg-blue-500 h-full transition-all duration-100 ease-linear"
                   style={{ width: `${progress}%` }}
                 />
               </div>
-              <p className="mt-4 text-slate-400 font-mono font-bold">{Math.floor(progress)}%</p>
+              <p className="mt-4 text-slate-500 font-mono font-bold text-lg">{Math.floor(progress)}%</p>
             </div>
           )}
         </div>
 
-        {/* 完了表示 */}
-        {showDone && !isLoading && (
-          <div className="mb-24">
-            <span className="text-5xl font-black text-blue-600 drop-shadow-sm">
-              完了
-            </span>
-          </div>
-        )}
+        {/* 完了表示（3秒でフェードアウト） */}
+        <div className={`mb-20 transition-opacity duration-1000 ${showDone && !isLoading ? 'opacity-100' : 'opacity-0'}`}>
+          <span className="text-5xl font-black text-green-500 bg-white px-10 py-4 rounded-3xl shadow-lg border-2 border-green-100">
+            完了
+          </span>
+        </div>
       </div>
     </div>
   );
